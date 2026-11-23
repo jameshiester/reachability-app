@@ -1,0 +1,46 @@
+name: Publish to ECR
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+    steps:
+      - name: Validate configuration
+        run: |
+          set -euo pipefail
+          for variable in AWS_REGION AWS_ROLE_ARN ECR_REPOSITORY; do
+            if [[ -z "${!variable}" ]]; then
+              echo "::error::Missing GitHub Actions variable ${variable}"
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build --tag "app:${GITHUB_SHA}" .
+      - name: Assume AWS role
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Publish image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          image="${ECR_REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}"
+          docker tag "app:${GITHUB_SHA}" "$image"
+          docker push "$image"
+          printf 'Published image `%s`\n' "$image" >> "$GITHUB_STEP_SUMMARY"
